@@ -1,8 +1,27 @@
 from models.device import Device
 from models.server import Server
 from models.task import Task
+from scheduling.aiPolicy import AdaptiveGreenPolicy
 from scheduling.offloadStrategy import DRLInspiredHeuristic, ListSchedulingHeuristic, StaticRule
 from scheduling.scheduler import Scheduler
+
+
+def showAdaptiveExample():
+    device = Device(energyCapacity=100.0)
+    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0, wirelessBandwidth=2.0)
+    cloud = Server("CloudServer", 5.0, wirelessDelay=5.0, wiredDelay=10.0,
+                   wirelessBandwidth=2.0)
+    policy = AdaptiveGreenPolicy(0.35)
+    scheduler = Scheduler(device, [edge, cloud], policy)
+    tasks = [Task("Small", 10, 1, 10), Task("Large", 80, 2, 30), Task("Another", 25, 1, 5)]
+    print("\nTask 6 adaptive green policy:")
+    for task in tasks:
+        state = policy.getState(task, device, [edge, cloud])
+        timeWeight, energyWeight = policy.getWeights(state, device)
+        target = scheduler.submitTask(task)
+        print(f"{task.id}: {target.name}, time weight={timeWeight:.2f}, "
+              f"energy weight={energyWeight:.2f}, available battery={state['availableBattery']:.2f}")
+    print("Run python runTask6.py for the six-scenario comparison.")
 
 
 def runDemo():

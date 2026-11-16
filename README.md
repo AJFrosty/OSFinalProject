@@ -1,6 +1,35 @@
-# Distributed Scheduling: Implementation Requirements 1 to 5
+# Distributed Scheduling: Implementation Requirements 1 to 6
 
-This implementation covers the first five implementation requirements in the COMP3320 project document.
+This implementation adds Task 6 to the original requirements 1 to 5 implementation.
+
+## Task 6 quick start
+
+Run these commands from the repository root using Python 3.10 or newer:
+
+```bash
+python run.py
+python testImplementation.py
+python testTask6.py
+python runTask6.py
+```
+
+The adaptive policy uses a simple weighted score for time and local CPU energy. Its
+weights respond to battery and wireless speed. The experiment runner tunes on
+separate workloads, then compares static, list scheduling, and adaptive scheduling
+in six scenarios with five seeds each. Results are in `results/task6/`.
+
+To regenerate the charts:
+
+```bash
+python -m pip install -r requirements.txt
+python plotTask6.py
+```
+
+See [Task 6 explanation and results](Task6.md) for the formula, test design,
+measured results, and integration notes. Tasks 7 and 8 are still required for the
+remaining eight scenarios and the memory and full energy-breakdown charts.
+
+## Original core simulator
 
 ## Included
 
