@@ -1,0 +1,2 @@
+# Only chart generation needs this package. The simulator uses the standard library.
+matplotlib>=3.8,<4
