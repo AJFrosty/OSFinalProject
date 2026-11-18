@@ -160,8 +160,9 @@ def testRemoteDispatchRespectsPriorityAmongTransferredTasks():
     scheduler.submitTask(slowUpload, currentTime=0.0)
     scheduler.submitTask(fastUpload, currentTime=0.0)
 
-    assert scheduler.dispatchTask("EdgeServer", currentTime=1.0) is fastUpload
+    assert scheduler.dispatchTask("EdgeServer", currentTime=1.0) is None
     assert scheduler.dispatchTask("EdgeServer", currentTime=5.0) is slowUpload
+    assert scheduler.dispatchTask("EdgeServer", currentTime=6.0) is fastUpload
 
 
 def testLocalTasksDoNotRequireUpload():

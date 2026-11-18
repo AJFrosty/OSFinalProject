@@ -12,6 +12,10 @@ class Device(Server):
         self.remainingEnergy = energyCapacity
         self.energyPerWorkUnit = energyPerWorkUnit
         self.reservedEnergy = 0.0
+        self.computationEnergy = 0.0
+        self.transmissionEnergy = 0.0
+        self.radioIdleEnergy = 0.0
+        self.wakeEnergy = 0.0
 
     @property
     def availableEnergy(self):
@@ -39,11 +43,34 @@ class Device(Server):
             return True
         return False
 
+    def consumeTransmissionEnergy(self, energyCost):
+        if energyCost < 0:
+            raise ValueError("Transmission energy cannot be negative")
+        if energyCost > self.availableEnergy:
+            raise ValueError("Insufficient battery energy for transmission")
+        self.remainingEnergy -= energyCost
+        self.transmissionEnergy += energyCost
+        return energyCost
+
+    def consumeRadioEnergy(self, energyCost):
+        if energyCost < 0:
+            raise ValueError("Radio energy cannot be negative")
+        actualCost = min(energyCost, self.availableEnergy)
+        self.remainingEnergy -= actualCost
+        self.radioIdleEnergy += actualCost
+        return actualCost
+
+    def consumeWakeEnergy(self, energyCost):
+        consumed = self.consumeTransmissionEnergy(energyCost)
+        self.wakeEnergy += consumed
+        return consumed
+
     def consumeEnergy(self, task):
         energyCost = self.estimateEnergy(task)
         if energyCost > self.remainingEnergy:
             raise ValueError(f"Insufficient local energy to execute task {task.id}")
         self.remainingEnergy -= energyCost
+        self.computationEnergy += energyCost
         return energyCost
 
     def nextTask(self, currentTime=0.0):

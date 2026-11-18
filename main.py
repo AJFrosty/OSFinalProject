@@ -1,27 +1,9 @@
 from models.device import Device
 from models.server import Server
 from models.task import Task
-from scheduling.aiPolicy import AdaptiveGreenPolicy
 from scheduling.offloadStrategy import DRLInspiredHeuristic, ListSchedulingHeuristic, StaticRule
 from scheduling.scheduler import Scheduler
-
-
-def showAdaptiveExample():
-    device = Device(energyCapacity=100.0)
-    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0, wirelessBandwidth=2.0)
-    cloud = Server("CloudServer", 5.0, wirelessDelay=5.0, wiredDelay=10.0,
-                   wirelessBandwidth=2.0)
-    policy = AdaptiveGreenPolicy(0.35)
-    scheduler = Scheduler(device, [edge, cloud], policy)
-    tasks = [Task("Small", 10, 1, 10), Task("Large", 80, 2, 30), Task("Another", 25, 1, 5)]
-    print("\nTask 6 adaptive green policy:")
-    for task in tasks:
-        state = policy.getState(task, device, [edge, cloud])
-        timeWeight, energyWeight = policy.getWeights(state, device)
-        target = scheduler.submitTask(task)
-        print(f"{task.id}: {target.name}, time weight={timeWeight:.2f}, "
-              f"energy weight={energyWeight:.2f}, available battery={state['availableBattery']:.2f}")
-    print("Run python runTask6.py for the six-scenario comparison.")
+from ioMgmt.networkInterface import NetworkInterface
 
 
 def runDemo():
@@ -128,3 +110,27 @@ def showCommunicationExample():
     print(f"Edge dispatch before upload completion: {earlyTask}")
     readyTask = edgeScheduler.dispatchTask("EdgeServer", currentTime=edgeTask.transferCompletionTime)
     print(f"Edge dispatch after upload completion: {readyTask.id if readyTask else None}")
+
+
+def showIoManagementExample():
+    device = Device("IoDevice", 1.0, energyCapacity=100.0)
+    edge = Server("IoEdge", 3.0, wirelessBandwidth=10.0)
+    network = NetworkInterface(policy="FCFS", radioPolicy="predictive", idleTimeout=4.0,
+                               wakeDelay=1.0, wakeEnergy=0.5, txPower=0.2,
+                               idlePower=0.05, bandwidthVariation=0.1, randomSeed=7,
+                               device=device)
+    scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
+    firstTask = Task("UploadOne", 20, 2, dataSize=20)
+    secondTask = Task("UploadTwo", 15, 1, dataSize=10)
+    scheduler.submitTask(firstTask, currentTime=0.0)
+    scheduler.submitTask(secondTask, currentTime=0.0)
+    scheduler.dispatchTask("IoEdge", currentTime=firstTask.transferCompletionTime)
+    scheduler.dispatchTask("IoEdge", currentTime=secondTask.transferCompletionTime)
+    scheduler.dispatchTask("IoEdge", currentTime=secondTask.transferCompletionTime + 5.0)
+    print("\nEnergy-aware I/O management:")
+    print(f"Upload policy: {network.policy}")
+    print(f"Radio policy: {network.radioPolicy}")
+    print(f"Radio state: {network.state}")
+    print(f"Transmission energy: {network.transmissionEnergy:.2f}")
+    print(f"Radio idle energy: {network.radioIdleEnergy:.2f}")
+    print(f"Remaining battery: {device.remainingEnergy:.2f}")

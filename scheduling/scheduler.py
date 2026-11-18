@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from ioMgmt.networkInterface import NetworkInterface
 
 
 @dataclass
@@ -7,6 +8,15 @@ class Scheduler:
     servers: list
     strategy: object
     currentTime: float = 0.0
+    networkInterface: object = None
+
+    def __post_init__(self):
+        if self.networkInterface is None:
+            self.networkInterface = NetworkInterface(device=self.device)
+        elif self.networkInterface.device is None:
+            self.networkInterface.device = self.device
+        if hasattr(self.strategy, "setNetworkInterface"):
+            self.strategy.setNetworkInterface(self.networkInterface)
 
     def findServer(self, serverName):
         if self.device.name == serverName:
@@ -22,6 +32,7 @@ class Scheduler:
         if currentTime < self.currentTime:
             raise ValueError("Simulation time cannot move backwards")
         self.currentTime = currentTime
+        self.networkInterface.advance(currentTime)
         return self.currentTime
 
     def submitTask(self, task, currentTime=None):
@@ -29,10 +40,11 @@ class Scheduler:
         if task.status == "running":
             raise ValueError(f"Task {task.id} is already running")
 
-        if task.status in ("ready", "transferring"):
+        if task.status in ("ready", "transferring", "uploadQueued"):
             currentServer = self.findServer(task.location)
             if currentServer is None or not currentServer.removeTask(task.id):
                 raise ValueError(f"Task {task.id} could not be found in its current queue")
+            self.networkInterface.cancelTask(task.id)
         elif task.status not in ("new", "waiting"):
             raise ValueError(f"Task {task.id} cannot be scheduled from status {task.status}")
 
@@ -43,6 +55,8 @@ class Scheduler:
             targetServer = min(self.servers, key=lambda server: server.estimateFinishTime(task))
 
         targetServer.addTask(task, now)
+        if targetServer.isRemote:
+            self.networkInterface.enqueue(task, targetServer, now)
         return targetServer
 
     def dispatchTask(self, serverName, currentTime=None):
