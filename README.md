@@ -1,7 +1,5 @@
 # Distributed Edge Scheduling Simulator
 
-COMP3320 operating systems project implementation covering Requirements 1–6 and 8, plus the completed Requirement 7 memory-management extension. The code uses camelCase for user-defined filenames, variables, attributes and methods, with PascalCase for classes. Python's required special method names (such as `__init__`) are retained.
-
 ## Project Structure
 
 ```text
@@ -12,11 +10,7 @@ edgeScheduler/
     runAllExperiments.py
     allScenarioResults.json
     requirement6Results.json
-    testImplementation.py
-    testRequirement6.py
-    testRequirement7.py
-    testRequirement8.py
-    testScenarioRunner.py
+    testAll.py
     models/
         task.py
         priorityQueue.py
@@ -52,14 +46,10 @@ python -m pip install -r requirements.txt
 python run.py
 ```
 
-Run all tests:
+Run the complete test suite (all 45 checks for Requirements 1–8 and the experiment runner):
 
 ```bash
-python testImplementation.py
-python testRequirement6.py
-python testRequirement7.py
-python testRequirement8.py
-python testScenarioRunner.py
+python testAll.py
 ```
 
 ## Requirements 1–5: Distributed Scheduling
@@ -171,6 +161,3 @@ The six charts are explicitly listed in the assignment's Required Visualizations
 
 The experiment runner records makespan, local computation energy, transmission energy, radio-idle energy, wake energy, offloaded/local task counts, completed and rejected tasks, average queue waiting time, queue occupancy, energy efficiency, node memory usage, peak and average memory utilization, admission rejections, service-cache hit rate, cache hits/misses/evictions, migration data volume, radio state time, radio wake-up count, offloaded/local percentages, queue waiting time by node and adaptive scheduler overhead.
 
-## Scope and Modelling Notes
-
-This project implements Requirements 1–8, with Requirement 7 integrated after Requirements 1–6 and 8. It is a discrete-event simulator, not an operating-system kernel or hardware benchmark. The default compute speeds, memory capacities, energy rates, bandwidths, cache image sizes and service-load delays are configurable simulation assumptions; use the measured results from the selected configuration when writing the reflection and design brief.

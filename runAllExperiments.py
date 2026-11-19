@@ -1,5 +1,4 @@
 import json
-
 from experiments.resultsPlotter import generateAllCharts
 from experiments.scenarioRunner import printScenarioSummary, runAllScenarios
 

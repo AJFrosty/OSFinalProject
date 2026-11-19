@@ -1,5 +1,4 @@
 import json
-
 from experiments.greenPolicyExperiment import printRequirement6Results, runRequirement6Experiment
 
 
