@@ -11,8 +11,8 @@ def testSerialFcfsUploads():
     edge = Server("Edge", 2.0, wirelessBandwidth=10.0)
     network = NetworkInterface(device=device, txPower=0.2)
     scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
-    first = Task("First", 5, 2, dataSize=20)
-    second = Task("Second", 5, 1, dataSize=10)
+    first = Task("First", 5, 2, dataSize=20, memory=0)
+    second = Task("Second", 5, 1, dataSize=10, memory=0)
     scheduler.submitTask(first, 0.0)
     scheduler.submitTask(second, 0.0)
     assert first.transferStartTime == 0.0
@@ -30,8 +30,8 @@ def testPriorityUploadQueue():
     edge = Server("Edge", 2.0, wirelessBandwidth=10.0)
     network = NetworkInterface(policy="PRIORITY", device=device)
     scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
-    first = Task("First", 5, 3, dataSize=10)
-    second = Task("Second", 5, 1, dataSize=10)
+    first = Task("First", 5, 3, dataSize=10, memory=0)
+    second = Task("Second", 5, 1, dataSize=10, memory=0)
     scheduler.submitTask(first, 0.0)
     scheduler.submitTask(second, 0.0)
     assert scheduler.dispatchTask("Edge", 1.0) is first
@@ -44,7 +44,7 @@ def testTransmissionEnergyIsCharged():
     edge = Server("Edge", 2.0, wirelessBandwidth=10.0)
     network = NetworkInterface(device=device, txPower=0.5)
     scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
-    task = Task("Transmit", 5, 1, dataSize=20)
+    task = Task("Transmit", 5, 1, dataSize=20, memory=0)
     scheduler.submitTask(task, 0.0)
     assert network.transmissionEnergy == 1.0
     assert device.remainingEnergy == 99.0
@@ -56,7 +56,7 @@ def testTransmissionEnergyCannotOverdrawBattery():
     edge = Server("Edge", 2.0, wirelessBandwidth=1.0)
     network = NetworkInterface(device=device, txPower=2.0)
     scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
-    task = Task("TooExpensive", 5, 1, dataSize=1)
+    task = Task("TooExpensive", 5, 1, dataSize=1, memory=0)
     scheduler.submitTask(task, 0.0)
     assert task.status == "energyRejected"
     assert network.energyRejected == ["TooExpensive"]
@@ -68,12 +68,12 @@ def testRadioSleepsAndWakes():
     edge = Server("Edge", 2.0, wirelessBandwidth=10.0)
     network = NetworkInterface(device=device, idleTimeout=2.0, wakeDelay=1.0, wakeEnergy=0.5)
     scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
-    first = Task("First", 5, 1, dataSize=10)
+    first = Task("First", 5, 1, dataSize=10, memory=0)
     scheduler.submitTask(first, 0.0)
     scheduler.dispatchTask("Edge", 1.0)
     scheduler.dispatchTask("Edge", 4.0)
     assert network.state == "sleep"
-    second = Task("Second", 5, 1, dataSize=10)
+    second = Task("Second", 5, 1, dataSize=10, memory=0)
     scheduler.submitTask(second, 5.0)
     assert second.transferStartTime == 6.0
     assert second.transferCompletionTime == 7.0
@@ -98,7 +98,7 @@ def testBandwidthVariesWithinConfiguredRange():
     network = NetworkInterface(device=device, bandwidthVariation=0.2, randomSeed=7)
     scheduler = Scheduler(device, [edge], StaticRule(0), networkInterface=network)
     for index in range(4):
-        task = Task(f"Task{index}", 1, 1, dataSize=1)
+        task = Task(f"Task{index}", 1, 1, dataSize=1, memory=0)
         scheduler.submitTask(task, float(index * 2))
         scheduler.dispatchTask("Edge", task.transferCompletionTime)
     values = network.bandwidthHistory

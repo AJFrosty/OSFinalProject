@@ -74,7 +74,7 @@ class AdaptiveGreenPolicy:
             task = entry[2]
             server = entry[3]
             bandwidth = self.networkInterface.bandwidthByServer.get(server.name, server.wirelessBandwidth)
-            waitTime += task.dataSize / bandwidth if bandwidth > 0 else 0.0
+            waitTime += (task.dataSize + task.memory) / bandwidth if bandwidth > 0 else 0.0
         return waitTime
 
     def estimateEnergy(self, task, server, device):
@@ -85,7 +85,7 @@ class AdaptiveGreenPolicy:
         bandwidth = server.wirelessBandwidth
         if self.networkInterface is not None:
             bandwidth = self.networkInterface.bandwidthByServer.get(server.name, bandwidth)
-        transferTime = task.dataSize / bandwidth if bandwidth > 0 else 0.0
+        transferTime = (task.dataSize + task.memory) / bandwidth if bandwidth > 0 else 0.0
         wakeEnergy = self.networkInterface.wakeEnergy if self.networkInterface.state == "sleep" else 0.0
         return self.networkInterface.txPower * transferTime + wakeEnergy
 

@@ -1,4 +1,4 @@
-from main import runDemo, showCommunicationExample, showEnergyExample, showIoManagementExample, showListSchedulingExample, showStaticRuleExample
+from main import runDemo, showCommunicationExample, showEnergyExample, showIoManagementExample, showListSchedulingExample, showMemoryManagementExample, showStaticRuleExample
 
 
 runDemo()
@@ -7,3 +7,5 @@ showListSchedulingExample()
 showEnergyExample()
 showCommunicationExample()
 showIoManagementExample()
+
+showMemoryManagementExample()

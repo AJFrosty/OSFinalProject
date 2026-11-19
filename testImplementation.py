@@ -51,8 +51,8 @@ def testListSchedulingChoosesEarliestFinish():
     scheduler = Scheduler(device, [edge, cloud], ListSchedulingHeuristic())
 
     localTask = Task("LocalTask", 5, 1)
-    edgeTask = Task("EdgeTask", 20, 1)
-    cloudTask = Task("CloudTask", 100, 1)
+    edgeTask = Task("EdgeTask", 20, 1, memory=0)
+    cloudTask = Task("CloudTask", 100, 1, memory=0)
 
     assert scheduler.submitTask(localTask) is device
     assert scheduler.submitTask(edgeTask) is edge
@@ -65,7 +65,7 @@ def testListSchedulingChoosesEarliestFinish():
 def testNetworkDelayIncluded():
     device = Device("LocalDevice", 1.0, energyCapacity=100.0)
     edge = Server("EdgeServer", 3.0, wirelessDelay=5.0)
-    task = Task("SmallTask", 5, 1)
+    task = Task("SmallTask", 5, 1, memory=0)
     assert device.estimateFinishTime(task) == 5.0
     assert round(edge.estimateFinishTime(task), 2) == 6.67
 
@@ -114,7 +114,7 @@ def testNoExecutionWhenEnergyInsufficientAndNoRemoteServer():
 
 def testUploadTimeUsesDataSizeAndWirelessBandwidth():
     edge = Server("EdgeServer", 3.0, wirelessDelay=2.0, wirelessBandwidth=10.0)
-    task = Task("Upload", 20, 1, dataSize=50)
+    task = Task("Upload", 20, 1, dataSize=50, memory=0)
     assert edge.getTransferTime(task) == 5.0
     assert edge.getCommunicationDelay(task) == 7.0
 
@@ -122,7 +122,7 @@ def testUploadTimeUsesDataSizeAndWirelessBandwidth():
 def testCloudUploadIncludesWirelessAndWiredTransferTime():
     cloud = Server("CloudServer", 5.0, wirelessDelay=2.0, wiredDelay=4.0,
                    wirelessBandwidth=10.0, wiredBandwidth=100.0)
-    task = Task("CloudUpload", 20, 1, dataSize=50)
+    task = Task("CloudUpload", 20, 1, dataSize=50, memory=0)
     assert cloud.getTransferTime(task) == 5.5
     assert cloud.getCommunicationDelay(task) == 11.5
     device = Device("LocalDevice", 1.0)
@@ -138,7 +138,7 @@ def testRemoteTaskCannotRunBeforeUploadCompletes():
     device = Device("LocalDevice", 1.0)
     edge = Server("EdgeServer", 3.0, wirelessDelay=2.0, wirelessBandwidth=10.0)
     scheduler = Scheduler(device, [edge], StaticRule(0))
-    task = Task("DelayedUpload", 20, 1, dataSize=50)
+    task = Task("DelayedUpload", 20, 1, dataSize=50, memory=0)
 
     assert scheduler.submitTask(task, currentTime=3.0) is edge
     assert task.status == "transferring"
@@ -155,8 +155,8 @@ def testRemoteDispatchRespectsPriorityAmongTransferredTasks():
     device = Device("LocalDevice", 1.0)
     edge = Server("EdgeServer", 3.0, wirelessDelay=0.0, wirelessBandwidth=10.0)
     scheduler = Scheduler(device, [edge], StaticRule(0))
-    slowUpload = Task("HighPrioritySlowUpload", 10, 1, dataSize=50)
-    fastUpload = Task("LowPriorityFastUpload", 10, 2, dataSize=10)
+    slowUpload = Task("HighPrioritySlowUpload", 10, 1, dataSize=50, memory=0)
+    fastUpload = Task("LowPriorityFastUpload", 10, 2, dataSize=10, memory=0)
     scheduler.submitTask(slowUpload, currentTime=0.0)
     scheduler.submitTask(fastUpload, currentTime=0.0)
 

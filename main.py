@@ -8,7 +8,7 @@ from ioMgmt.networkInterface import NetworkInterface
 
 def runDemo():
     device = Device("LocalDevice", 1.0)
-    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0)
+    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0, memoryCapacity=256.0, cacheSlots=3)
     cloud = Server("CloudServer", 5.0, wirelessDelay=5.0, wiredDelay=10.0)
     servers = [edge, cloud]
 
@@ -44,7 +44,7 @@ def runDemo():
 
 def showStaticRuleExample():
     device = Device("LocalDevice", 1.0)
-    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0)
+    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0, memoryCapacity=256.0, cacheSlots=3)
     scheduler = Scheduler(device, [edge], StaticRule(50))
     sampleTask = Task("StaticTask", 75, 1, 10)
     targetServer = scheduler.submitTask(sampleTask)
@@ -53,7 +53,7 @@ def showStaticRuleExample():
 
 def showListSchedulingExample():
     device = Device("LocalDevice", 1.0, energyCapacity=500.0)
-    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0)
+    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0, memoryCapacity=256.0, cacheSlots=3)
     cloud = Server("CloudServer", 5.0, wirelessDelay=5.0, wiredDelay=10.0)
     scheduler = Scheduler(device, [edge, cloud], ListSchedulingHeuristic())
     tasks = [
@@ -71,7 +71,7 @@ def showListSchedulingExample():
 
 def showEnergyExample():
     device = Device("LocalDevice", 1.0, energyCapacity=30.0, energyPerWorkUnit=0.5)
-    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0)
+    edge = Server("EdgeServer", 3.0, wirelessDelay=5.0, memoryCapacity=256.0, cacheSlots=3)
     scheduler = Scheduler(device, [edge], StaticRule(100))
     firstTask = Task("LocalTask", 40, 1)
     secondTask = Task("EnergyLimitedTask", 30, 1)
@@ -87,7 +87,7 @@ def showEnergyExample():
 
 def showCommunicationExample():
     device = Device("LocalDevice", 1.0)
-    edge = Server("EdgeServer", 3.0, wirelessDelay=2.0, wirelessBandwidth=10.0)
+    edge = Server("EdgeServer", 3.0, wirelessDelay=2.0, wirelessBandwidth=10.0, memoryCapacity=256.0, cacheSlots=3)
     edgeScheduler = Scheduler(device, [edge], StaticRule(0))
     edgeTask = Task("EdgeUpload", 30, 1, dataSize=50)
     edgeScheduler.submitTask(edgeTask, currentTime=0.0)
@@ -114,7 +114,7 @@ def showCommunicationExample():
 
 def showIoManagementExample():
     device = Device("IoDevice", 1.0, energyCapacity=100.0)
-    edge = Server("IoEdge", 3.0, wirelessBandwidth=10.0)
+    edge = Server("IoEdge", 3.0, wirelessBandwidth=10.0, memoryCapacity=256.0, cacheSlots=3)
     network = NetworkInterface(policy="FCFS", radioPolicy="predictive", idleTimeout=4.0,
                                wakeDelay=1.0, wakeEnergy=0.5, txPower=0.2,
                                idlePower=0.05, bandwidthVariation=0.1, randomSeed=7,
@@ -134,3 +134,28 @@ def showIoManagementExample():
     print(f"Transmission energy: {network.transmissionEnergy:.2f}")
     print(f"Radio idle energy: {network.radioIdleEnergy:.2f}")
     print(f"Remaining battery: {device.remainingEnergy:.2f}")
+
+
+def showMemoryManagementExample():
+    device = Device("MemoryDevice", 1.0, memoryCapacity=96.0, schedulerMemoryReserve=16.0)
+    edge = Server(
+        "MemoryEdge", 3.0, wirelessDelay=1.0, wirelessBandwidth=12.0,
+        memoryCapacity=128.0, cacheSlots=2, cachePolicy="PREDICTIVE",
+        serviceImageSize=12.0, serviceLoadDelay=2.0
+    )
+    scheduler = Scheduler(device, [edge], StaticRule(0))
+    tasks = [
+        Task("AnalyticsTask", 25, 1, dataSize=8, memory=20, service="analytics"),
+        Task("DatabaseTask", 30, 2, dataSize=10, memory=24, service="database"),
+        Task("AnalyticsTaskTwo", 20, 1, dataSize=6, memory=16, service="analytics")
+    ]
+    print("\nMemory management:")
+    for task in tasks:
+        target = scheduler.submitTask(task, currentTime=0.0)
+        print(f"{task.id}: {target.name if target else task.status}")
+    print(f"Local scheduler reservation: {device.memoryManager.reservedSystemMemory:.2f} MB")
+    print(f"Edge cache policy: {edge.memoryManager.cachePolicy}")
+    print(f"Edge cache misses: {edge.memoryManager.cacheMisses}")
+    print(f"Edge cache hits: {edge.memoryManager.cacheHits}")
+    for nodeName, summary in scheduler.getMemorySummary().items():
+        print(f"{nodeName} memory usage: {summary['currentUsedMemoryMb']:.2f}/{summary['capacityMb']:.2f} MB")

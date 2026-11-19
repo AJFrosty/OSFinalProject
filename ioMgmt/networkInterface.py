@@ -42,8 +42,10 @@ class NetworkInterface:
         self.currentBandwidth = None
         self.bandwidthByServer = {}
         self.transmissionEnergy = 0.0
+        self.migrationDataVolume = 0.0
         self.radioIdleEnergy = 0.0
         self.wakeEnergyConsumed = 0.0
+        self.wakeUps = 0
         self.energyRejected = []
         self.stateTimes = {"active": 0.0, "idle": 0.0, "sleep": 0.0}
         self.bandwidthHistory = []
@@ -72,9 +74,9 @@ class NetworkInterface:
         task.transferCompletionTime = float("inf")
         self.uploadQueue.append((task.priority, self.sequence, task, server, currentTime))
         self.sequence += 1
-        self._startNext(currentTime)
+        self.startNext(currentTime)
 
-    def _popNext(self):
+    def popNext(self):
         if not self.uploadQueue:
             return None
         if self.policy == "FCFS":
@@ -83,7 +85,7 @@ class NetworkInterface:
             index = min(range(len(self.uploadQueue)), key=lambda i: (self.uploadQueue[i][0], self.uploadQueue[i][1]))
         return self.uploadQueue.pop(index)
 
-    def _getBandwidth(self, server):
+    def getBandwidth(self, server):
         base = server.wirelessBandwidth
         current = self.bandwidthByServer.get(server.name, base)
         if self.bandwidthVariation:
@@ -96,13 +98,14 @@ class NetworkInterface:
         self.bandwidthHistory.append(current)
         return current
 
-    def _startNext(self, startTime):
+    def startNext(self, startTime):
         if self.activeTransfer is not None or not self.uploadQueue:
             return
-        entry = self._popNext()
+        entry = self.popNext()
         priority, sequence, task, server, arrivalTime = entry
-        bandwidth = self._getBandwidth(server)
-        wirelessTime = task.dataSize / bandwidth if task.dataSize else 0.0
+        bandwidth = self.getBandwidth(server)
+        transferSize = task.dataSize + task.memory
+        wirelessTime = transferSize / bandwidth if transferSize else 0.0
         txEnergy = self.txPower * wirelessTime
         if self.device is not None and txEnergy > self.device.availableEnergy:
             task.status = "energyRejected"
@@ -110,10 +113,11 @@ class NetworkInterface:
             self.energyRejected.append(task.id)
             server.removeTask(task.id)
             task.status = "energyRejected"
-            self._startNext(startTime)
+            self.startNext(startTime)
             return
         wakeTime = self.wakeDelay if self.state == "sleep" else 0.0
         if wakeTime:
+            self.wakeUps += 1
             self.wakeEnergyConsumed += self.wakeEnergy
             if self.device is not None:
                 if self.wakeEnergy > self.device.availableEnergy:
@@ -122,7 +126,7 @@ class NetworkInterface:
                     self.energyRejected.append(task.id)
                     server.removeTask(task.id)
                     task.status = "energyRejected"
-                    self._startNext(startTime)
+                    self.startNext(startTime)
                     return
                 self.device.consumeWakeEnergy(self.wakeEnergy)
         transferStart = startTime + wakeTime
@@ -130,18 +134,22 @@ class NetworkInterface:
             self.device.consumeTransmissionEnergy(txEnergy)
         self.transmissionEnergy += txEnergy
         task.transferStartTime = transferStart
-        wiredTime = task.dataSize / server.wiredBandwidth if server.wiredDelay > 0 and task.dataSize else 0.0
+        wiredTime = transferSize / server.wiredBandwidth if server.wiredDelay > 0 and transferSize else 0.0
         task.transferTime = wirelessTime + wiredTime
-        task.communicationDelay = server.wirelessDelay + server.wiredDelay + task.transferTime + wakeTime
-        task.transferCompletionTime = transferStart + wirelessTime + wiredTime + server.wirelessDelay + server.wiredDelay
+        task.communicationDelay = (server.wirelessDelay + server.wiredDelay + task.transferTime
+                                   + wakeTime + task.cacheLoadDelay)
+        task.transferCompletionTime = (transferStart + wirelessTime + wiredTime
+                                       + server.wirelessDelay + server.wiredDelay
+                                       + task.cacheLoadDelay)
+        self.migrationDataVolume += transferSize
         task.status = "transferring"
         self.activeTransfer = (task, server)
         self.activeStartTime = transferStart
         self.activeWirelessEnd = transferStart + wirelessTime
         if not wakeTime:
-            self._setState("active", transferStart)
+            self.setState("active", transferStart)
 
-    def _setState(self, newState, atTime):
+    def setState(self, newState, atTime):
         if newState == self.state:
             return
         duration = max(0.0, atTime - self.currentTime)
@@ -163,7 +171,7 @@ class NetworkInterface:
         if self.activeTransfer is not None and self.activeTransfer[0].id == taskId:
             self.activeTransfer = None
             if self.state == "active":
-                self._setState("idle", self.currentTime)
+                self.setState("idle", self.currentTime)
                 self.idleSince = self.currentTime
             return True
         return changed
@@ -172,24 +180,24 @@ class NetworkInterface:
         if currentTime < self.currentTime:
             raise ValueError("Network time cannot move backwards")
         if self.activeTransfer is not None and self.state == "sleep" and self.activeStartTime <= currentTime:
-            self._setState("active", self.activeStartTime)
+            self.setState("active", self.activeStartTime)
         while self.activeTransfer is not None and self.activeWirelessEnd <= currentTime:
             task, server = self.activeTransfer
             finishTime = self.activeWirelessEnd
-            self._setState("idle", finishTime)
+            self.setState("idle", finishTime)
             if task.transferCompletionTime <= finishTime:
                 task.status = "ready"
             else:
                 task.status = "transferring"
             self.activeTransfer = None
-            self._startNext(finishTime)
+            self.startNext(finishTime)
         if self.activeTransfer is None:
             if self.state == "idle":
                 sleepAt = self.idleSince + self.getIdleTimeout()
                 if currentTime >= sleepAt:
-                    self._setState("sleep", sleepAt)
+                    self.setState("sleep", sleepAt)
             if self.uploadQueue:
-                self._startNext(currentTime if self.state == "sleep" else max(self.currentTime, self.idleSince))
+                self.startNext(currentTime if self.state == "sleep" else max(self.currentTime, self.idleSince))
         if self.state == "idle" and currentTime > self.currentTime:
             duration = currentTime - self.currentTime
             self.stateTimes["idle"] += duration
@@ -211,8 +219,10 @@ class NetworkInterface:
         return {
             "computationEnergy": self.device.computationEnergy if self.device is not None else 0.0,
             "transmissionEnergy": self.transmissionEnergy,
+            "migrationDataVolumeMb": self.migrationDataVolume,
             "radioIdleEnergy": self.radioIdleEnergy,
             "wakeEnergy": self.wakeEnergyConsumed,
+            "wakeUps": self.wakeUps,
             "totalIoEnergy": self.transmissionEnergy + self.radioIdleEnergy + self.wakeEnergyConsumed,
             "radioStateTimes": dict(self.stateTimes),
             "energyRejected": list(self.energyRejected),

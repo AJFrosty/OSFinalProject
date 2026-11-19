@@ -1,121 +1,194 @@
-from collections import OrderedDict, defaultdict
-import sys
+from collections import OrderedDict, deque
 
 
 class MemoryManager:
-    def __init__(self, capacityMb, cacheSlots=3, schedulerMemoryMb=0.0,
-                 cachePolicy="LRU", serviceHistory=5):
-        if capacityMb < 0 or schedulerMemoryMb < 0 or schedulerMemoryMb > capacityMb:
-            raise ValueError("Invalid memory capacity or scheduler reservation")
-        if cacheSlots < 0 or cachePolicy not in ("LRU", "PREDICTIVE"):
-            raise ValueError("Invalid cache configuration")
+    def __init__(self, nodeName, capacityMb, cacheSlots=0, cachePolicy="LRU",
+                 serviceImageSize=12.0, serviceLoadDelay=2.0, historyLimit=20):
+        if capacityMb <= 0:
+            raise ValueError("Memory capacity must be greater than zero")
+        if cacheSlots < 0 or serviceImageSize < 0 or serviceLoadDelay < 0:
+            raise ValueError("Cache configuration values cannot be negative")
+        if cachePolicy not in ("LRU", "PREDICTIVE"):
+            raise ValueError("Cache policy must be LRU or PREDICTIVE")
+        self.nodeName = nodeName
         self.capacityMb = float(capacityMb)
-        self.schedulerMemoryMb = float(schedulerMemoryMb)
-        self.cacheCapacity = int(cacheSlots)
+        self.cacheSlots = int(cacheSlots)
         self.cachePolicy = cachePolicy
-        self.serviceHistory = max(1, int(serviceHistory))
-        self.reservedMemory = 0.0
+        self.serviceImageSize = float(serviceImageSize)
+        self.serviceLoadDelay = float(serviceLoadDelay)
         self.taskMemory = {}
-        self.rejections = []
-        self.cache = OrderedDict()
-        self.serviceArrivals = defaultdict(int)
-        self.recentServices = []
+        self.usedTaskMemory = 0.0
+        self.systemReservations = {}
+        self.serviceCache = OrderedDict()
+        self.cacheMemoryUsed = 0.0
+        self.serviceHistory = deque(maxlen=historyLimit)
+        self.admissionRejections = []
         self.cacheHits = 0
         self.cacheMisses = 0
-        self.cacheLoads = 0
-        self.peakUsedMemory = self.schedulerMemoryMb
+        self.cacheEvictions = 0
+        self.peakUsedMemory = 0.0
         self.memorySamples = []
-        self.migrationDataMb = 0.0
+
+    @property
+    def reservedSystemMemory(self):
+        return sum(self.systemReservations.values())
+
+    @property
+    def totalUsedMemory(self):
+        return self.reservedSystemMemory + self.usedTaskMemory + self.cacheMemoryUsed
 
     @property
     def availableMemory(self):
-        return max(0.0, self.capacityMb - self.schedulerMemoryMb - self.reservedMemory)
+        return max(0.0, self.capacityMb - self.totalUsedMemory)
 
     @property
-    def usedMemory(self):
-        return self.schedulerMemoryMb + self.reservedMemory
+    def utilization(self):
+        return min(1.0, self.totalUsedMemory / self.capacityMb)
+
+    @property
+    def cacheHitRate(self):
+        accesses = self.cacheHits + self.cacheMisses
+        return self.cacheHits / accesses if accesses else 0.0
+
+    def reserveSystemMemory(self, owner, amountMb):
+        if amountMb < 0:
+            raise ValueError("System memory reservation cannot be negative")
+        existing = self.systemReservations.get(owner, 0.0)
+        extra = amountMb - existing
+        if extra > self.availableMemory:
+            raise MemoryError(
+                f"{self.nodeName} cannot reserve {amountMb:.2f} MB for {owner}"
+            )
+        self.systemReservations[owner] = float(amountMb)
+        self.updatePeak()
+        return self.systemReservations[owner]
 
     def canAdmit(self, task):
-        return task.memory >= 0 and task.memory <= self.availableMemory
-
-    def admitTask(self, task):
-        if task.id in self.taskMemory:
-            return True
         if task.memory < 0:
             raise ValueError("Task memory footprint cannot be negative")
+        if task.id in self.taskMemory:
+            return True
+        return task.memory <= self.availableMemory
+
+    def recordRejection(self, task, currentTime=0.0, reason="insufficientMemory"):
+        rejection = {
+            "taskId": task.id,
+            "node": self.nodeName,
+            "requestedMb": float(task.memory),
+            "availableMb": self.availableMemory,
+            "time": float(currentTime),
+            "reason": reason
+        }
+        self.admissionRejections.append(rejection)
+        return rejection
+
+    def admit(self, task):
+        if task.id in self.taskMemory:
+            raise ValueError(f"Task {task.id} already holds memory on {self.nodeName}")
         if not self.canAdmit(task):
-            self.rejections.append(task.id)
             return False
         self.taskMemory[task.id] = float(task.memory)
-        self.reservedMemory += float(task.memory)
-        self.peakUsedMemory = max(self.peakUsedMemory, self.usedMemory)
-        self.memorySamples.append(self.usedMemory)
+        self.usedTaskMemory += float(task.memory)
+        self.updatePeak()
         return True
 
-    def releaseTask(self, taskId):
-        amount = self.taskMemory.pop(taskId, 0.0)
-        self.reservedMemory = max(0.0, self.reservedMemory - amount)
-        self.memorySamples.append(self.usedMemory)
-        return amount
+    def release(self, taskId):
+        amount = self.taskMemory.pop(taskId, None)
+        if amount is None:
+            return False
+        self.usedTaskMemory = max(0.0, self.usedTaskMemory - amount)
+        return True
 
-    def getMigrationTime(self, task, bandwidth):
-        if bandwidth <= 0:
-            raise ValueError("Migration bandwidth must be greater than zero")
-        amount = float(task.dataSize) + float(task.memory)
-        self.migrationDataMb += amount
-        return amount / bandwidth
-
-    def accessService(self, service, loadTime=1.0):
-        if loadTime < 0:
-            raise ValueError("Service load time cannot be negative")
-        self.serviceArrivals[service] += 1
-        self.recentServices.append(service)
-        self.recentServices = self.recentServices[-self.serviceHistory:]
-        if self.cacheCapacity == 0:
-            self.cacheMisses += 1
-            self.cacheLoads += 1
-            return loadTime
-        if service in self.cache:
-            self.cacheHits += 1
-            self.cache.move_to_end(service)
+    def accessService(self, service, currentTime=0.0):
+        if self.cacheSlots <= 0:
             return 0.0
+        if not service:
+            service = "default"
+        self.serviceHistory.append(service)
+        if service in self.serviceCache:
+            self.cacheHits += 1
+            self.serviceCache.move_to_end(service)
+            self.serviceCache[service] = float(currentTime)
+            return 0.0
+
         self.cacheMisses += 1
-        self.cacheLoads += 1
-        if len(self.cache) >= self.cacheCapacity:
-            victim = self._chooseVictim()
-            self.cache.pop(victim, None)
-        self.cache[service] = True
-        return loadTime
+        while self.serviceCache and (
+            len(self.serviceCache) >= self.cacheSlots
+            or self.availableMemory < self.serviceImageSize
+        ):
+            self.evictService()
 
-    def _chooseVictim(self):
+        if len(self.serviceCache) < self.cacheSlots and self.availableMemory >= self.serviceImageSize:
+            self.serviceCache[service] = float(currentTime)
+            self.cacheMemoryUsed += self.serviceImageSize
+            self.updatePeak()
+        return self.serviceLoadDelay
+
+    def evictService(self):
+        if not self.serviceCache:
+            return None
         if self.cachePolicy == "LRU":
-            return next(iter(self.cache))
-        recentCounts = {service: self.recentServices.count(service) for service in self.cache}
-        return min(self.cache, key=lambda service: (recentCounts[service], self.cache[service]))
+            service, lastAccess = self.serviceCache.popitem(last=False)
+        else:
+            service = min(
+                self.serviceCache,
+                key=lambda item: (self.predictiveScore(item), self.serviceCache[item])
+            )
+            lastAccess = self.serviceCache.pop(service)
+        self.cacheMemoryUsed = max(0.0, self.cacheMemoryUsed - self.serviceImageSize)
+        self.cacheEvictions += 1
+        return service, lastAccess
 
-    def setCachePolicy(self, policy):
-        if policy not in ("LRU", "PREDICTIVE"):
+    def predictiveScore(self, service):
+        score = 0.0
+        recent = list(self.serviceHistory)
+        for age, arrival in enumerate(reversed(recent)):
+            if arrival == service:
+                score += 1.0 / (age + 1)
+        return score
+
+    def setCachePolicy(self, cachePolicy):
+        if cachePolicy not in ("LRU", "PREDICTIVE"):
             raise ValueError("Cache policy must be LRU or PREDICTIVE")
-        self.cachePolicy = policy
+        self.cachePolicy = cachePolicy
+
+    def sample(self, currentTime):
+        value = {
+            "time": float(currentTime),
+            "usedMemoryMb": self.totalUsedMemory,
+            "utilization": self.utilization,
+            "cacheHitRate": self.cacheHitRate,
+            "cacheEntries": len(self.serviceCache)
+        }
+        self.memorySamples.append(value)
+        self.updatePeak()
+        return value
+
+    def updatePeak(self):
+        self.peakUsedMemory = max(self.peakUsedMemory, self.totalUsedMemory)
 
     def getSummary(self):
-        sampleCount = len(self.memorySamples)
-        averageUsed = sum(self.memorySamples) / sampleCount if sampleCount else self.usedMemory
-        totalCacheRequests = self.cacheHits + self.cacheMisses
+        averageUtilization = (
+            sum(sample["utilization"] for sample in self.memorySamples) / len(self.memorySamples)
+            if self.memorySamples else self.utilization
+        )
         return {
+            "node": self.nodeName,
             "capacityMb": self.capacityMb,
-            "schedulerMemoryMb": self.schedulerMemoryMb,
-            "currentUsedMemoryMb": self.usedMemory,
+            "usedTaskMemoryMb": self.usedTaskMemory,
+            "cacheMemoryMb": self.cacheMemoryUsed,
+            "reservedSystemMemoryMb": self.reservedSystemMemory,
+            "currentUsedMemoryMb": self.totalUsedMemory,
             "peakUsedMemoryMb": self.peakUsedMemory,
-            "averageUsedMemoryMb": averageUsed,
-            "availableMemoryMb": self.availableMemory,
-            "admissionRejections": list(self.rejections),
-            "cachePolicy": self.cachePolicy,
+            "averageUtilization": averageUtilization,
+            "currentUtilization": self.utilization,
+            "admissionRejections": list(self.admissionRejections),
+            "rejectionCount": len(self.admissionRejections),
             "cacheHits": self.cacheHits,
             "cacheMisses": self.cacheMisses,
-            "cacheHitRate": self.cacheHits / totalCacheRequests if totalCacheRequests else 0.0,
-            "cacheLoads": self.cacheLoads,
-            "cachedServices": list(self.cache.keys()),
-            "migrationDataMb": self.migrationDataMb,
-            "policyMemoryBytes": sys.getsizeof(self.cache) + sys.getsizeof(self.taskMemory)
+            "cacheHitRate": self.cacheHitRate,
+            "cacheEvictions": self.cacheEvictions,
+            "cachePolicy": self.cachePolicy,
+            "cacheEntries": list(self.serviceCache.keys()),
+            "samples": list(self.memorySamples)
         }

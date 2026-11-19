@@ -15,6 +15,9 @@ class Scheduler:
             self.networkInterface = NetworkInterface(device=self.device)
         elif self.networkInterface.device is None:
             self.networkInterface.device = self.device
+        self.device.memoryManager.reserveSystemMemory(
+            "adaptiveScheduler", self.device.schedulerMemoryReserve
+        )
         if hasattr(self.strategy, "setNetworkInterface"):
             self.strategy.setNetworkInterface(self.networkInterface)
 
@@ -48,16 +51,40 @@ class Scheduler:
         elif task.status not in ("new", "waiting"):
             raise ValueError(f"Task {task.id} cannot be scheduled from status {task.status}")
 
-        targetServer = self.strategy.chooseServer(task, self.device, self.servers)
-        if targetServer is self.device and not self.device.canReserveTask(task):
-            if not self.servers:
-                raise ValueError(f"Insufficient local energy and no remote server is available for task {task.id}")
-            targetServer = min(self.servers, key=lambda server: server.estimateFinishTime(task))
+        preferredServer = self.strategy.chooseServer(task, self.device, self.servers)
+        allServers = [self.device] + list(self.servers)
+        remainingServers = [server for server in allServers if server is not preferredServer]
+        remainingServers.sort(key=lambda server: server.estimateFinishTime(task))
+        candidates = ([preferredServer] if preferredServer in allServers else []) + remainingServers
+        memoryRejected = False
+        energyRejected = False
 
-        targetServer.addTask(task, now)
-        if targetServer.isRemote:
-            self.networkInterface.enqueue(task, targetServer, now)
-        return targetServer
+        for targetServer in candidates:
+            if targetServer is self.device and not self.device.canReserveTask(task):
+                energyRejected = True
+                continue
+            if not targetServer.memoryManager.canAdmit(task):
+                targetServer.memoryManager.recordRejection(task, now)
+                memoryRejected = True
+                continue
+            added = targetServer.addTask(task, now)
+            if not added:
+                memoryRejected = True
+                continue
+            if targetServer.isRemote:
+                self.networkInterface.enqueue(task, targetServer, now)
+            return targetServer
+
+        task.location = "none"
+        task.memoryNode = "none"
+        if memoryRejected:
+            task.status = "memoryRejected"
+        elif energyRejected:
+            task.status = "new"
+            raise ValueError(f"Insufficient local energy and no remote server can admit task {task.id}")
+        else:
+            task.status = "rejected"
+        return None
 
     def dispatchTask(self, serverName, currentTime=None):
         now = self.updateTime(currentTime)
@@ -66,9 +93,21 @@ class Scheduler:
             raise ValueError(f"Unknown server: {serverName}")
         return server.nextTask(now)
 
+    def completeTask(self, serverName, taskId):
+        server = self.findServer(serverName)
+        if server is None:
+            raise ValueError(f"Unknown server: {serverName}")
+        return server.completeTask(taskId)
+
     def getQueueSummary(self):
         summary = {}
         summary[self.device.name] = [task.id for task in self.device.getQueueTasks()]
         for server in self.servers:
             summary[server.name] = [task.id for task in server.getQueueTasks()]
+        return summary
+
+    def getMemorySummary(self):
+        summary = {self.device.name: self.device.getMemorySummary()}
+        for server in self.servers:
+            summary[server.name] = server.getMemorySummary()
         return summary

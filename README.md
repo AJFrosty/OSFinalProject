@@ -1,6 +1,6 @@
 # Distributed Edge Scheduling Simulator
 
-This project implements the COMP3320 scheduling simulator requirements 1–6 and 8. Requirement 7 is intentionally excluded. The implementation uses the same modular Python structure throughout, with camelCase filenames, variables and methods, and PascalCase class names.
+COMP3320 operating systems project implementation covering Requirements 1–6 and 8, plus the completed Requirement 7 memory-management extension. The code uses camelCase for user-defined filenames, variables, attributes and methods, with PascalCase for classes. Python's required special method names (such as `__init__`) are retained.
 
 ## Project Structure
 
@@ -9,9 +9,14 @@ edgeScheduler/
     main.py
     run.py
     runRequirement6.py
+    runAllExperiments.py
+    allScenarioResults.json
+    requirement6Results.json
     testImplementation.py
     testRequirement6.py
+    testRequirement7.py
     testRequirement8.py
+    testScenarioRunner.py
     models/
         task.py
         priorityQueue.py
@@ -21,134 +26,151 @@ edgeScheduler/
         offloadStrategy.py
         adaptiveGreenPolicy.py
         scheduler.py
+    memoryMgmt/
+        memoryManager.py
     ioMgmt/
         networkInterface.py
     experiments/
         greenPolicyExperiment.py
-    README.md
+        scenarioRunner.py
+        resultsPlotter.py
+    graphs/
+        makespanComparison.png
+        energyImpact.png
+        queueOccupancy.png
+        energyMakespanTradeoff.png
+        memoryAndCacheOverTime.png
+        energyBreakdown.png
 ```
 
-## Run and Test
+## Requirements and Run Instructions
 
-Use Python 3.10 or newer. No third-party packages are required.
+Use Python 3.10 or newer. The simulator and tests use the Python standard library. Matplotlib is needed only to generate the charts.
 
 ```bash
+python -m pip install -r requirements.txt
 python run.py
-python testImplementation.py
-python testRequirement6.py
-python testRequirement8.py
-python runRequirement6.py
 ```
 
-`runRequirement6.py` performs the separate tuning and testing experiment, prints the policy comparison and writes `requirement6Results.json` in the current directory.
+Run all tests:
+
+```bash
+python testImplementation.py
+python testRequirement6.py
+python testRequirement7.py
+python testRequirement8.py
+python testScenarioRunner.py
+```
 
 ## Requirements 1–5: Distributed Scheduling
 
 ### Distributed priority queues
 
-The local device, edge server and cloud server each have a separate priority queue. Lower numeric priority values are treated as higher priority. Equal-priority tasks retain FIFO order. Tasks can be removed from one queue and assigned to another through the scheduler.
+The local device, edge server and cloud server each have a separate priority queue. Lower numeric priority values are treated as higher priority. Equal-priority tasks retain FIFO order. Queued tasks can migrate between nodes through the scheduler.
 
 ### Offloading policies
 
-- `StaticRule` offloads tasks whose compute size is above its configured threshold.
-- `DRLInspiredHeuristic` is the logic-based offloading strategy for Requirement 2. It considers task size and queue pressure.
-- `ListSchedulingHeuristic` compares the expected finish time at each eligible execution point and selects the earliest one.
+- `StaticRule` offloads tasks whose compute size exceeds its configured threshold.
+- `DRLInspiredHeuristic` provides the logic-based offloading strategy for Requirement 2. It considers task size and queue pressure; it is not a trained reinforcement-learning agent.
+- `ListSchedulingHeuristic` compares estimated completion time at eligible execution points and chooses the earliest finish.
 
 ### Heterogeneous execution and communication
 
-The default demo models a slower local device, a faster edge server and the fastest cloud server. Remote execution includes communication delays. Upload time depends on task data size and bandwidth. Cloud transfer time includes wireless and wired portions. A remote task cannot be dispatched before its transfer completes.
+The local device is the slowest execution point, edge servers are faster, and the cloud is fastest. Remote execution includes wireless delay and, for the cloud, wired backhaul delay. The wireless interface uses a single upload queue. Remote tasks cannot execute before upload and communication delay have elapsed.
+
+Requirement 7 extends the transfer payload from input data alone to `dataSize + memory`, because a migrating task must transfer its memory state as well as its input.
 
 ### Local energy budget
 
-The device reserves energy for tasks admitted to its local queue. Local execution consumes energy on dispatch. The scheduler avoids admitting local work that would exceed the remaining battery budget and can redirect work to an available remote server.
+The device reserves energy for tasks admitted to its local queue. Local execution consumes energy on dispatch. The scheduler avoids admitting local work that would exceed the remaining battery budget and redirects tasks when another node is able to accept them.
 
 ## Requirement 6: Adaptive Green Process Scheduling
 
-`AdaptiveGreenPolicy` is the third policy. It uses an adaptive multi-objective scoring rule, which is one of the two implementation options permitted by the project. It does not require a deep-learning library or a trained neural network.
+`AdaptiveGreenPolicy` implements the permitted adaptive multi-objective scoring option. It uses a state containing remaining battery, local queue length, current wireless speed and task size. It estimates completion time and device-side energy for each candidate, normalizes both measurements and applies adaptive weights.
 
-### State
+The energy weight rises as the battery becomes depleted. Network conditions affect both latency and energy emphasis. The candidate with the lowest weighted score is selected. The policy records decision count, decision time per task and an estimate of retained policy memory.
 
-Every decision records the required state inputs:
+The policy is tuned using a separate training workload. The testing workload uses different seeds and workload size/data/memory distributions. Run the dedicated comparison with:
 
-- `remainingBattery`: remaining battery as a proportion of device capacity
-- `localQueueLength`: number of tasks waiting on the local device
-- `wirelessSpeed`: current wireless bandwidth estimate
-- `taskSize`: compute size of the task being scheduled
-
-### Latency and energy score
-
-For each candidate execution point, the policy estimates completion time and device-side energy cost. Local energy is estimated using the device's computation-energy rate. Remote energy includes the predicted wireless transmission energy and a wake-up cost when the radio is asleep.
-
-The two values are normalized against the candidate set before scoring:
-
-```text
-score = timeWeight * normalizedCompletionTime
-      + energyWeight * normalizedDeviceEnergy
+```bash
+python runRequirement6.py
 ```
 
-The candidate with the lowest score is selected. This normalization prevents a measurement's units or numerical scale from dominating the other objective.
+The result is written to `requirement6Results.json`.
 
-The weights adapt to the current conditions. Battery pressure increases as the battery level falls. Network pressure increases as wireless speed falls below the reference bandwidth.
+## Requirement 7: Memory Management Across Device, Edge and Cloud
 
-```text
-batteryPressure = 1 - remainingBattery
-networkPressure = 1 - min(1, wirelessSpeed / referenceBandwidth)
+### Finite node memory and task working sets
 
-timeWeight = baseTimeWeight + networkPressure * networkSensitivity
-energyWeight = baseEnergyWeight
-             + batteryPressure * batterySensitivity
-             + networkPressure * networkEnergySensitivity
-```
+Every `Device` and `Server` owns a `MemoryManager` with a finite `memoryCapacity`. Every `Task` has a `memory` working-set footprint; the default is 8 MB. Capacities can be changed when constructing a node. The experiment configuration uses a 128 MB local device, a 256 MB edge server and a 1024 MB cloud node unless a scenario changes them.
 
-The raw weights are normalized so that they sum to one. When the battery is low, energy receives more weight. When the network is slow, the policy changes both latency and energy emphasis because slow transfers affect completion time and transmission energy.
+Task working-set memory is reserved when a task is admitted. It remains allocated while the task is queued, transferring or running. `Scheduler.completeTask` releases it when execution finishes. `removeTask` releases it when a queued task migrates to another node.
 
-### Tuning on a separate workload
+### Admission control and rejection records
 
-The experiment tunes the adaptive policy using a training workload that is not reused for testing. The default run uses training seed `41` and a training task-size/data-size profile. It searches 24 combinations of base time weight, battery sensitivity and network sensitivity.
+A node accepts a task only if its free memory can hold the working set. If the selected node is full, the scheduler records the rejection and tries other available nodes. If no node can admit the task, its status becomes `memoryRejected`. Every node's rejection records include the task, requested memory, available memory, simulation time and reason.
 
-Each setting is evaluated using a balanced training objective:
+Inspect the records using `scheduler.getMemorySummary()` or `server.memoryManager.getSummary()`.
+
+### Migration cost
+
+A migration moves both input data and task memory state. The transfer payload is:
 
 ```text
-trainingObjective = 0.5 * normalizedMakespan
-                  + 0.5 * normalizedTotalEnergy
+migrationSize = task.dataSize + task.memory
+transferTime = migrationSize / bandwidth
 ```
 
-The equal 0.5 weights are used because the policy is explicitly multi-objective: completion time and device energy are both primary goals. The metrics are normalized before combining them, so seconds do not dominate energy units simply because their numerical values are larger. The selected parameters are then held fixed during testing; only the policy's state-based weights adapt during each scheduling decision.
+For a cloud server with wireless and wired segments, transfer time includes the payload transmission time on both links. The wireless transmission energy is charged by Requirement 8's interface using the wireless transfer duration.
 
-The default testing run uses five different seeds: `97`, `107`, `117`, `127` and `137`. The testing workload uses a different task-size/data-size profile from the training workload. Static rule, list scheduling and the tuned adaptive policy are each run against every testing workload. The report gives mean and standard deviation across the five runs.
+### Edge service cache
 
-### Scheduler overhead
+Workloads use five service types: analytics, media, database, vision and sensor. Edge servers have a configurable service cache; the experiment system defaults to three service-image slots of 12 MB each. A cache hit adds no service-load delay. A miss adds the configured `serviceLoadDelay`, just like a page fault. Cached service images count against the edge server's finite memory.
 
-The policy measures the time spent making each scheduling decision using `perf_counter_ns`. It reports the number of decisions, total decision time, average decision time per task and policy memory in bytes and kilobytes.
+Two replacement policies are implemented:
 
-Policy memory is an estimate of the retained Python object sizes for the policy and its decision history. It is an in-process object-size estimate, not total operating-system resident memory.
+- `LRU`: evicts the service image that has been unused for the longest time.
+- `PREDICTIVE`: uses a recent service-arrival history and a recency-weighted frequency score to estimate which cached service is least likely to be requested again.
+
+Set `cachePolicy="LRU"` or `cachePolicy="PREDICTIVE"` when constructing an edge `Server`. Cache hit, miss, eviction, memory and hit-rate metrics are collected.
+
+### AI scheduler memory reservation
+
+When `Scheduler` is created, it reserves `device.schedulerMemoryReserve` on the local device for the adaptive scheduler. The default reservation is 16 MB. This memory is unavailable for task admission and is included in node utilization and peak-memory measurements. Configure `schedulerMemoryReserve` on `Device` to change it.
 
 ## Requirement 8: Energy-Aware I/O Management
 
-### Wireless upload queue
+`ioMgmt/networkInterface.py` models one wireless upload at a time and supports FCFS and priority-first upload scheduling. Transmission energy is charged as `txPower * wirelessTransferTime`. The radio has active, idle and sleep states; it supports fixed and predictive sleep timeouts and a wake-up delay/energy cost. A seeded random-walk bandwidth variation model supports fluctuating wireless conditions.
 
-`ioMgmt/networkInterface.py` models the device wireless interface. Remote uploads enter one shared upload queue, and only one wireless transfer is active at a time. The default policy is FCFS. Set `policy="PRIORITY"` to use priority-first scheduling; lower numeric priority values are served first and equal priorities retain arrival order. An active transfer is not preempted.
+The I/O summary reports computation, transmission, radio-idle and wake energy separately, radio-state times, migration data volume, energy rejections and bandwidth history.
 
-### Transmission and radio energy
+## Testing Scenarios and Required Charts
 
-Transmission energy is calculated as `txPower * wirelessTransferTime` and charged to the device battery. The radio has `active`, `idle` and `sleep` states. After the configured timeout it enters sleep; waking adds a delay and energy cost. Idle radio energy is calculated using `idlePower` and the time spent idle.
+The project documentation requests six core scenarios (high/low energy, fast/slow wireless, many large/many small tasks) and eight extension scenarios (ample/constrained edge memory, LRU/predictive cache, fixed/predictive radio timeout, stable/fluctuating bandwidth). `experiments/scenarioRunner.py` defines exactly these 14 scenarios.
 
-Use `radioPolicy="fixed"` for a fixed sleep timeout or `radioPolicy="predictive"` to set the timeout from recent upload inter-arrival times. A seeded random-walk bandwidth model can be enabled with `bandwidthVariation` and `randomSeed`.
+Every scenario runs all three policies (static, list scheduling and adaptive) over at least five independent random seeds. The default experiment uses seeds `97`, `107`, `117`, `127` and `137`. Requirement 6 is tuned on a separate training workload using seed `41`; its selected settings are held fixed during scenario testing.
 
-Call `scheduler.networkInterface.getEnergySummary()` for computation, transmission, idle-radio and wake energy, radio-state time, energy rejections and bandwidth history.
+Run the full experiment and create all six charts:
 
-## Default Requirement 6 Demonstration
+```bash
+python runAllExperiments.py
+```
 
-The default deterministic run on the five testing seeds produced the following sample results:
+This creates `allScenarioResults.json` and the six PNG charts in `graphs/`. The charts are:
 
-| Policy | Mean makespan | Mean total energy |
-|---|---:|---:|
-| Static rule | 474.26 | 126.43 |
-| List scheduling | 194.15 | 80.03 |
-| Adaptive green | 211.72 | 12.80 |
+1. `makespanComparison.png` — makespan comparison across scenarios, showing mean and standard deviation.
+2. `energyImpact.png` — total energy comparison across scenarios.
+3. `queueOccupancy.png` — average waiting-queue occupancy across scenarios.
+4. `energyMakespanTradeoff.png` — one mean point per policy per scenario.
+5. `memoryAndCacheOverTime.png` — edge memory utilization and service-cache hit rate over time, comparing LRU and predictive cache cases.
+6. `energyBreakdown.png` — mean computation, transmission and radio-idle energy per policy.
 
-The adaptive policy reduced mean energy in this test workload while producing a somewhat higher mean makespan than list scheduling. These values describe this simulator configuration and seed set; they are not universal performance claims.
+The six charts are explicitly listed in the assignment's Required Visualizations section. The full JSON report keeps the underlying scenario, seed, policy, memory, cache and energy measurements so the charts can be regenerated or reformatted.
 
-## Scope
+## Metrics Collected
 
-Requirements 1–6 and 8 are included. Requirement 7, memory management across device, edge and cloud, is not implemented in this package.
+The experiment runner records makespan, local computation energy, transmission energy, radio-idle energy, wake energy, offloaded/local task counts, completed and rejected tasks, average queue waiting time, queue occupancy, energy efficiency, node memory usage, peak and average memory utilization, admission rejections, service-cache hit rate, cache hits/misses/evictions, migration data volume, radio state time, radio wake-up count, offloaded/local percentages, queue waiting time by node and adaptive scheduler overhead.
+
+## Scope and Modelling Notes
+
+This project implements Requirements 1–8, with Requirement 7 integrated after Requirements 1–6 and 8. It is a discrete-event simulator, not an operating-system kernel or hardware benchmark. The default compute speeds, memory capacities, energy rates, bandwidths, cache image sizes and service-load delays are configurable simulation assumptions; use the measured results from the selected configuration when writing the reflection and design brief.
